@@ -12,10 +12,10 @@ import jsPDF from "jspdf";
 import { Download, Save, User, FileText, BarChart2, History, Upload } from "lucide-react";
 
 /**
- * SF-36/RAND-36 (ES) – Plataforma de encuesta
+ * SF-36/RAND‑36 (ES) – Plataforma de encuesta
  *
  * Notas:
- * - RAND-36 en español (parafraseado). Si usas SF-36 oficial, importa JSON con licencia.
+ * - RAND‑36 en español (parafraseado). Si usas SF‑36 oficial, importa JSON con licencia.
  * - Puntuación 0–100 pre-mapeada; cada escala = media de ítems contestados.
  */
 
@@ -149,6 +149,7 @@ const ensureProfile = (user:{id:string;name:string}, notes:string) => { let p=fi
 
 // ====== HELPERS (descargas y validaciones) ======
 function triggerDownloadFromBlob(blob: Blob, filename: string, _fallbackText?: string, keepUrlForManual: boolean = false): string | null {
+  // Forzar descarga directa con Blob + <a download>
   const transientURL = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = transientURL;
@@ -161,7 +162,10 @@ function triggerDownloadFromBlob(blob: Blob, filename: string, _fallbackText?: s
     const clickEvt = new MouseEvent('click', { bubbles: true, cancelable: true, view: window });
     a.dispatchEvent(clickEvt);
   }
+  // Limpia el URL usado para el click programático
   setTimeout(() => { try { a.remove(); URL.revokeObjectURL(transientURL); } catch {} }, 0);
+
+  // Si se solicita, devolvemos un segundo ObjectURL para permitir descarga manual por el usuario
   if (keepUrlForManual) {
     try { return URL.createObjectURL(blob); } catch { return null; }
   }
@@ -231,8 +235,7 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [answers, setAnswers] = useState<Record<string, number | undefined>>({});
   const [latestScores, setLatestScores] = useState<any>({});
-  // 🔒 Completitud SIEMPRE obligatoria (sin checkbox)
-  const enforceComplete = true as const;
+  const [enforceComplete, setEnforceComplete] = useState<boolean>(true);
   const [profiles, setProfiles] = useState<any[]>([]);
   const [showAllHistory, setShowAllHistory] = useState<boolean>(true);
   const [lastExport, setLastExport] = useState<{ filename: string; mime: string; text?: string; href?: string } | null>(null);
@@ -251,29 +254,37 @@ export default function App() {
   const handleSave = () => { if(!user?.id?.trim()) return alert("Primero identifica a la persona (ID o email)."); const profile=(findProfileById(user.id)||{ user, notes, assessments: [] }) as Profile; profile.user=user; (profile as any).notes=notes; saveProfile(profile); setProfiles(loadAllProfiles()); alert("Perfil guardado."); };
 
   const handleSubmit = async () => {
-    if (!user?.id?.trim()) return alert("Primero identifica a la persona (ID o email).");
-    if (enforceComplete && answeredCount < questionnaire.items.length)
-      return alert(`Faltan ${questionnaire.items.length - answeredCount} ítem(s) por responder. Debes completar todas las preguntas para guardar.`);
+  if (!user?.id?.trim()) return alert("Primero identifica a la persona (ID o email).");
+  if (enforceComplete && answeredCount < questionnaire.items.length)
+    return alert(`Faltan ${questionnaire.items.length - answeredCount} ítem(s) por responder o desactiva "Exigir completitud".`);
 
-    try {
-      const { error } = await supabase.from("assessments").insert([{
-        user_id: user.id,
-        user_name: user.name,
-        timestamp: new Date().toISOString(),
-        answers,
-        scores,
-        notes,
-      }]);
-      if (error) throw error;
-      alert("✅ Respuestas guardadas correctamente en Supabase.");
-      setAnswers({});
-      setLatestScores(scores);
-      localStorage.removeItem(`sf36_draft_${user.id}`);
-    } catch (err: any) {
-      console.error(err);
-      alert("❌ Error al guardar en Supabase: " + err.message);
-    }
+  const assessment = {
+    timestamp: new Date().toISOString(),
+    answers,
+    scores,
+    user_id: user.id,
+    user_name: user.name || "",
   };
+
+  try {
+    const { error } = await supabase.from("assessments").insert([{
+  user_id: user.id,
+  user_name: user.name,
+  timestamp: new Date().toISOString(),
+  answers,
+  scores,
+  notes,
+}]);
+  if (error) throw error;
+    alert("✅ Respuestas guardadas correctamente en Supabase.");
+    setAnswers({});
+    setLatestScores(scores);
+    localStorage.removeItem(`sf36_draft_${user.id}`);
+  } catch (err: any) {
+    console.error(err);
+    alert("❌ Error al guardar en Supabase: " + err.message);
+  }
+};
 
   const currentProfile = user?.id ? findProfileById(user.id) : null;
 
@@ -283,6 +294,7 @@ export default function App() {
     const json = JSON.stringify(currentProfile, null, 2);
     const filename = `sf36_perfil_${currentProfile.user.id}.json`;
     const blob = new Blob([json], { type:'application/json' });
+    // Revoca URL manual previa
     if (lastManualUrlRef.current) { try { URL.revokeObjectURL(lastManualUrlRef.current); } catch {} }
     const manualUrl = triggerDownloadFromBlob(blob, filename, json, true) || undefined;
     lastManualUrlRef.current = manualUrl || null;
@@ -343,6 +355,7 @@ export default function App() {
     all.forEach((p:any)=> (p.assessments||[]).forEach((a:any)=>{ 
       const cols=scales.map(k=>{ const s=a.scores?.[k]; return typeof s?.score==='number'? Math.round(s.score):"";
       });
+
       rows.push([p.user?.id||"", p.user?.name||"", a.timestamp, ...cols].join(',')); 
     })); 
     const csv=[header, ...rows].join('\n'); 
@@ -361,7 +374,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-muted/30 p-6 md:px-10">
       <div className="max-w-5xl mx-auto space-y-6">
-        <motion.h1 initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} className="text-2xl md:text-3xl font-bold">SF-36/RAND-36 (ES) – Plataforma</motion.h1>
+        <motion.h1 initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} className="text-2xl md:text-3xl font-bold">SF‑36/RAND‑36 (ES) – Plataforma</motion.h1>
 
         <Tabs defaultValue="evaluacion" className="w-full">
           <TabsList className="grid grid-cols-3 w-full">
@@ -390,25 +403,18 @@ export default function App() {
               </div>
               <div className="mt-4"><label className="text-sm">Notas del perfil (opcional)</label><Textarea placeholder="Antecedentes, observaciones, etc." value={notes} onChange={(e)=> setNotes(e.target.value)} /></div>
               <div className="mt-4 flex items-center gap-3">
-                {/* Importación de ítems (opcional)
-                <input type="file" accept="application/json" className="hidden" ref={fileInputRef} onChange={(e)=>{ const f=e.target.files?.[0]; if (f) handleImportJSON(f); if (fileInputRef.current) fileInputRef.current.value=""; }} />
+                {/* <input type="file" accept="application/json" className="hidden" ref={fileInputRef} onChange={(e)=>{ const f=e.target.files?.[0]; if (f) handleImportJSON(f); if (fileInputRef.current) fileInputRef.current.value=""; }} />
                 <Button variant="outline" onClick={()=> fileInputRef.current?.click()}><Upload className="w-4 h-4 mr-2" /> Importar ítems oficiales (JSON)</Button>
-                <div className="text-xs text-muted-foreground">Usa tu archivo con los 36 ítems y el mapeo de escalas.</div>
-                */}
+                <div className="text-xs text-muted-foreground">Usa tu archivo con los 36 ítems y el mapeo de escalas.</div> */}
               </div>
             </Section>
 
             <Section title={questionnaire.title}>
               <p className="text-sm text-muted-foreground mb-4">{questionnaire.instructions}</p>
-              {/* Progreso (sin checkbox) */}
-              <div className="mb-4">
-                <div className="text-sm mb-1">Progreso</div>
-                <Progress value={progress} />
-                <div className="text-xs text-muted-foreground mt-1">
-                  {answeredCount}/{questionnaire.items.length} respondidas
-                </div>
+              <div className="mb-4"><label className="flex items-center gap-2 text-sm mb-2"><input type="checkbox" checked={enforceComplete} onChange={(e)=> setEnforceComplete(e.target.checked)} /> Exigir completitud antes de guardar</label>
+                <div className="text-sm mb-1">Progreso</div><Progress value={progress} />
+                <div className="text-xs text-muted-foreground mt-1">{answeredCount}/{questionnaire.items.length} respondidas</div>
               </div>
-
               <div className="space-y-4">
                 {questionnaire.items.map((it: any, idx: number) => (
                   <div key={it.id} className="p-4 border rounded-2xl bg-background">
@@ -425,10 +431,7 @@ export default function App() {
                   </div>
                 ))}
               </div>
-              <div className="flex justify-between mt-6">
-                <Button variant="outline" onClick={()=> setAnswers({})}>Limpiar respuestas</Button>
-                <Button size="lg" onClick={handleSubmit}>Guardar respuestas y calcular</Button>
-              </div>
+              <div className="flex justify-between mt-6"><Button variant="outline" onClick={()=> setAnswers({})}>Limpiar respuestas</Button><Button size="lg" onClick={handleSubmit}>Guardar respuestas y calcular</Button></div>
             </Section>
           </TabsContent>
 
@@ -464,8 +467,7 @@ export default function App() {
           </TabsContent>
         </Tabs>
 
-        {/* Sección de última exportación (opcional)
-        {lastExport && (
+        {/* {lastExport && (
           <Section title="Última exportación (copiar si la descarga está bloqueada)">
             <div className="flex items-center justify-between mb-2 text-sm"><div><strong>Archivo:</strong> {lastExport.filename} · <strong>MIME:</strong> {lastExport.mime}</div>
               <div className="flex gap-2">{lastExport.text && (<Button variant="outline" onClick={async()=>{ try{ await navigator.clipboard?.writeText(lastExport.text!); alert('Contenido copiado'); } catch{ alert('No se pudo copiar automáticamente.'); } }}>Copiar contenido</Button>)}</div>
