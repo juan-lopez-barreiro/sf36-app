@@ -1,4 +1,5 @@
 "use client";
+import { supabase } from "@/lib/supabaseClient";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -252,14 +253,38 @@ export default function App() {
 
   const handleSave = () => { if(!user?.id?.trim()) return alert("Primero identifica a la persona (ID o email)."); const profile=(findProfileById(user.id)||{ user, notes, assessments: [] }) as Profile; profile.user=user; (profile as any).notes=notes; saveProfile(profile); setProfiles(loadAllProfiles()); alert("Perfil guardado."); };
 
-  const handleSubmit = () => {
-    if (!user?.id?.trim()) return alert("Primero identifica a la persona (ID o email).");
-    if (enforceComplete && answeredCount < questionnaire.items.length) return alert(`Faltan ${questionnaire.items.length - answeredCount} ítem(s) por responder o desactiva \"Exigir completitud\".`);
-    if (!enforceComplete) { const inc = validatePerScaleCompleteness(answers, questionnaire.scales, 0.5); if (inc.length) return alert(`Respuestas insuficientes en: ${inc.join(", ")}`); }
-    ensureProfile(user, notes); setProfiles(loadAllProfiles());
-    const assessment = { timestamp: new Date().toISOString(), answers, scores };
-    upsertAssessment(user.id, assessment); setLatestScores(scores); alert("Respuestas guardadas y resultados calculados."); setAnswers({}); try{ localStorage.removeItem(`sf36_draft_${user.id}`);}catch{}
+  const handleSubmit = async () => {
+  if (!user?.id?.trim()) return alert("Primero identifica a la persona (ID o email).");
+  if (enforceComplete && answeredCount < questionnaire.items.length)
+    return alert(`Faltan ${questionnaire.items.length - answeredCount} ítem(s) por responder o desactiva "Exigir completitud".`);
+
+  const assessment = {
+    timestamp: new Date().toISOString(),
+    answers,
+    scores,
+    user_id: user.id,
+    user_name: user.name || "",
   };
+
+  try {
+    const { error } = await supabase.from("assessments").insert([{
+  user_id: user.id,
+  user_name: user.name,
+  timestamp: new Date().toISOString(),
+  answers,
+  scores,
+  notes,
+}]);
+  if (error) throw error;
+    alert("✅ Respuestas guardadas correctamente en Supabase.");
+    setAnswers({});
+    setLatestScores(scores);
+    localStorage.removeItem(`sf36_draft_${user.id}`);
+  } catch (err: any) {
+    console.error(err);
+    alert("❌ Error al guardar en Supabase: " + err.message);
+  }
+};
 
   const currentProfile = user?.id ? findProfileById(user.id) : null;
 
@@ -378,9 +403,9 @@ export default function App() {
               </div>
               <div className="mt-4"><label className="text-sm">Notas del perfil (opcional)</label><Textarea placeholder="Antecedentes, observaciones, etc." value={notes} onChange={(e)=> setNotes(e.target.value)} /></div>
               <div className="mt-4 flex items-center gap-3">
-                <input type="file" accept="application/json" className="hidden" ref={fileInputRef} onChange={(e)=>{ const f=e.target.files?.[0]; if (f) handleImportJSON(f); if (fileInputRef.current) fileInputRef.current.value=""; }} />
+                {/* <input type="file" accept="application/json" className="hidden" ref={fileInputRef} onChange={(e)=>{ const f=e.target.files?.[0]; if (f) handleImportJSON(f); if (fileInputRef.current) fileInputRef.current.value=""; }} />
                 <Button variant="outline" onClick={()=> fileInputRef.current?.click()}><Upload className="w-4 h-4 mr-2" /> Importar ítems oficiales (JSON)</Button>
-                <div className="text-xs text-muted-foreground">Usa tu archivo con los 36 ítems y el mapeo de escalas.</div>
+                <div className="text-xs text-muted-foreground">Usa tu archivo con los 36 ítems y el mapeo de escalas.</div> */}
               </div>
             </Section>
 
